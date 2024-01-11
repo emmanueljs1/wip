@@ -11,55 +11,12 @@ open Eq using (_≡_; refl)
 module StepIndexedInterpreter where
 
 variable n k j : ℕ
-variable x : Fin n
 
-data Term : ℕ → Set where
-  var : Fin n → Term n
-  ƛ_ : Term (suc n) → Term n
-  _·_ : Term n → Term n → Term n
+data Con (A : Set) : Set where
+  ε : Con A
+  _•_ : Con A → A → Con A
 
-variable r s t : Term n
-
-infixl 7 _·_
-infix 5 ƛ_
-
-mutual
-  data Env : ℕ → Set where
-    ε : Env zero
-    _•_ : Env n → Domain → Env (suc n)
-
-  data Domain : Set where
-    wrong : Domain
-    timeout : Domain
-    ⟨ƛ_⟩_ : Term (suc n) → Env n → Domain
-
-variable γ δ : Env n
-variable a b d f : Domain
-
-infix 6 ⟨ƛ_⟩_
-
-data Good : Domain → Set where
-  timeoutGood : Good timeout
-  closureGood : Good (⟨ƛ t ⟩ γ)
-
-_??_ : Env n → Fin n → Domain
-(_ • a) ?? zero = a
-(γ • _) ?? suc x = γ ?? x
-
-infix 5 _??_
-
-eval : Term n → Env n → ℕ → Domain
-eval t γ zero = timeout
-eval (var x) γ (suc n) = γ ?? x
-eval (ƛ t) γ (suc n) = ⟨ƛ t ⟩ γ
-eval (r · s) γ (suc n)
-  with eval r γ n
-... | timeout = wrong
-... | wrong = wrong
-... | (⟨ƛ t ⟩ δ)
-  with eval s γ n
-... | a =
-  eval t (δ • a) n
+infixl 5 _•_
 
 data Type : Set where
   ι : Type
@@ -69,69 +26,117 @@ variable S T : Type
 
 infixr 7 _⇒_
 
-data Ctx : ℕ → Set where
-  ε : Ctx zero
-  _•_ : Ctx n → Type → Ctx (suc n)
+Ctx = Con Type
+variable Γ : Ctx
 
-variable Γ : Ctx n
+data _∋_ : Ctx → Type → Set where
+  zero : Γ • T ∋ T
+  suc : Γ ∋ T → Γ • S ∋ T
 
-data _∷_∈_ : Fin n → Type → Ctx n → Set where
-  here : zero ∷ T ∈ Γ • T
-  there : x ∷ T ∈ Γ → suc x ∷ T ∈ Γ • S
+infix 4 _∋_
 
-infix 4 _∷_∈_
+data _⊢_ : Ctx → Type → Set where
+  var : Γ ∋ T → Γ ⊢ T
+  ƛ_ : Γ • S ⊢ T → Γ ⊢ S ⇒ T
+  μ_ : Γ • T ⊢ T → Γ ⊢ T
+  _·_ : Γ ⊢ S ⇒ T → Γ ⊢ S → Γ ⊢ T
 
-data _⊢_∷_ : Ctx n → Term n → Type → Set where
-  ⊢var : x ∷ T ∈ Γ → Γ ⊢ var x ∷ T
+infix 4 _⊢_
 
-  ⊢abs : Γ • S ⊢ t ∷ T → Γ ⊢ ƛ t ∷ S ⇒ T
-
-  ⊢app : Γ ⊢ r ∷ S ⇒ T → Γ ⊢ s ∷ S → Γ ⊢ r · s ∷ T
-
-infix 4 _⊢_∷_
+variable r s t : Γ ⊢ T
 
 mutual
-  𝒟⟦_,_⟧ : Type → ℕ → Domain → Set
-  𝒟⟦ S ⇒ T , k ⟧ (⟨ƛ t ⟩ δ) =
+  data Env : Ctx → Set where
+    ε : Env ε
+    _•_ : Env Γ → Domain T → Env (Γ • T)
+
+  data Domain : Type → Set where
+    error : Domain T
+    timeout : Domain T
+    ⟨_⟩_ : Γ ⊢ T → Env Γ → Domain T
+
+infix 6 ⟨_⟩_
+
+variable γ δ : Env Γ
+variable a b d f : Domain T
+
+_??_ : Env Γ → Γ ∋ T → Domain T
+(γ • a) ?? zero = a
+(γ • _) ?? suc x = γ ?? x
+
+infix 5 _??_
+
+eval : Γ ⊢ T → Env Γ → ℕ → Domain T
+eval t γ zero = timeout
+eval (var x) γ (suc n)
+  with γ ?? x
+...  | timeout = error
+...  | error = error
+...  | ⟨ t ⟩ δ = eval t δ n
+eval (ƛ t) γ (suc n) = ⟨ ƛ t ⟩ γ
+eval (μ t) γ (suc n) = eval t (γ • ⟨ μ t ⟩ γ) n
+eval (r · s) γ (suc n)
+  with eval r γ n
+... | ⟨ var _ ⟩ _ = error
+... | ⟨ μ _ ⟩ _ = error
+... | ⟨ _ · _ ⟩ _ = error
+... | error = error
+... | timeout = timeout
+... | ⟨ ƛ t ⟩ δ = eval t (δ • ⟨ s ⟩ γ) n
+
+data Good : Domain T → Set where
+  closureGood : Good (⟨ t ⟩ δ)
+  timeoutGood : Good {T} timeout
+
+mutual
+  𝒟[_,_] : (T : Type) → ℕ → Domain T → Set
+  𝒟[ S ⇒ T , k ] (⟨ ƛ t ⟩ δ) =
     ∀ {j : ℕ}
     → j < k
-    → ∀ {a} → a ∈ 𝒟⟦ S , j ⟧
-      → (δ • a , t) ∈ ℰ⟦ T , j ⟧
-  𝒟⟦ ι , _ ⟧ timeout = ⊤
-  𝒟⟦ _ , _ ⟧ _ = ⊥
+    → ∀ {Γ} {γ : Env Γ} {s : Γ ⊢ S}
+      → (γ , s) ∈ ℰ[ S , j ]
+      → (δ • ⟨ s ⟩ γ , t) ∈ ℰ[ T , j ]
+  𝒟[ _ , _ ] _ = ⊥
 
-  ℰ⟦_,_⟧ : Type → ℕ → Env n × Term n → Set
-  ℰ⟦ T , k ⟧ (γ , t) =
-      ∀ {j} {b}
-      → j < k
-      → eval t γ j ≡ b → b ∈ 𝒟⟦ T , k ∸ j ⟧
+  ℰ[_,_] : (T : Type) → ℕ → Env Γ × Γ ⊢ T → Set
+  ℰ[ T , k ] (γ , t) =
+    ∀ {j} {b}
+    → j < k
+    → eval t γ j ≡ b → b ∈ 𝒟[ T , k ∸ j ]
 
-_⊨_#_ : Ctx n → Env n → ℕ → Set
+_⊨_#_ : (Γ : Ctx) → Env Γ → ℕ → Set
 Γ ⊨ γ # k =
-  ∀ {x} {T} {a} → x ∷ T ∈ Γ → γ ?? x ≡ a → a ∈ 𝒟⟦ T , k ⟧
+  ∀ {T} → (x : Γ ∋ T) → ∀ {a} → γ ?? x ≡ a → a ∈ 𝒟[ T , k ]
 
 infix 4 _⊨_#_
 
-_⊨_∷_#_ : Ctx n → Term n → Type → ℕ → Set
-Γ ⊨ t ∷ T # k =
-  ∀ {γ} → Γ ⊨ γ # k → (γ , t) ∈ ℰ⟦ T , k ⟧
+semantic-typing-k : (Γ : Ctx) → (T : Type) → Γ ⊢ T → ℕ → Set
+semantic-typing-k Γ T t k = ∀ {γ} → Γ ⊨ γ # k → (γ , t) ∈ ℰ[ T , k ]
 
-infix 4 _⊨_∷_#_
+infix 4 semantic-typing-k
+syntax semantic-typing-k Γ T t k = Γ ⊨ t ∷ T # k
 
-_⊨_∷_ : Ctx n → Term n → Type → Set
-Γ ⊨ t ∷ T = ∀ k → Γ ⊨ t ∷ T # k
+semantic-typing : (Γ : Ctx) → (T : Type) → Γ ⊢ T → Set
+semantic-typing Γ T t = ∀ k → Γ ⊨ t ∷ T # k
 
-infix 4 _⊨_∷_
+infix 4 semantic-typing
+syntax semantic-typing Γ T t = Γ ⊨ t ∷ T
 
-fundamental-lemma : Γ ⊢ t ∷ T → Γ ⊨ t ∷ T
-fundamental-lemma (⊢var x) (suc k) x₁ x₂ x₃ = {!!}
-fundamental-lemma (⊢abs x) (suc k) x₁ x₂ x₃ = {!!}
-fundamental-lemma (⊢app x x₄) (suc k) x₁ x₂ x₃ = {!!}
+fundamental-lemma : ∀ (t : Γ ⊢ T) → Γ ⊨ t ∷ T
+fundamental-lemma = {!!}
 
-𝒟→good : b ∈ 𝒟⟦ T , k ⟧ → Good b
-𝒟→good {timeout} {ι} _ = timeoutGood
-𝒟→good {⟨ƛ _ ⟩ _} {_ ⇒ _} _ = closureGood
+𝒟→Good : d ∈ 𝒟[ T , k ] → Good d
+𝒟→Good {ι} {d = error} {k = zero} ()
+𝒟→Good {_ ⇒ _} {d = error} {k = zero} ()
+𝒟→Good {ι} {d = timeout} {k = zero} ()
+𝒟→Good {_ ⇒ _} {d = timeout} {k = zero} _ = timeoutGood
+𝒟→Good {_ ⇒ _} {d = ⟨ _ ⟩ _} {k = zero} _ = closureGood
+𝒟→Good {ι} {d = error} {k = suc _} ()
+𝒟→Good {_ ⇒ _} {d = error} {k = suc _} ()
+𝒟→Good {ι} {d = timeout} {k = suc _} ()
+𝒟→Good {_ ⇒ _} {d = timeout} {k = suc _} ()
+𝒟→Good {_ ⇒ _} {d = ⟨ _ ⟩ _} {k = suc _} _ = closureGood
 
-type-soundness : ε ⊢ t ∷ T → Good (eval t ε n)
-type-soundness {n = n} ⊢t =
-  𝒟→good (fundamental-lemma ⊢t (suc n) (λ ()) ≤-refl refl)
+type-soundness : ∀ (t : ε ⊢ T) → eval t ε n ≡ d → Good d
+type-soundness {n = n} t refl =
+  𝒟→Good (fundamental-lemma t (suc n) (λ ()) ≤-refl refl)
