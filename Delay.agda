@@ -1,17 +1,20 @@
 {-# OPTIONS --sized-types #-}
 
+import Relation.Binary.PropositionalEquality as Eq
 open import Data.Empty using (⊥)
 open import Data.Product using (_,_; _×_; ∃-syntax)
-open import Data.Unit using (⊤)
+open import Data.Sum using (_⊎_; inj₁; inj₂)
+open import Data.Unit using (⊤; tt)
 open import Relation.Unary using (_∈_)
 open import Size
+open Eq using (_≡_; refl)
 
 module Delay where
 
 variable i : Size
 
 data Type : Set where
-  ι : Type
+  𝟚 : Type
   _⇒_ : Type → Type → Type
 
 infixr 7 _⇒_
@@ -32,16 +35,20 @@ infix 4 _∋_
 variable x : Γ ∋ T
 
 data _⊢_ : Ctx → Type → Set where
+  yes no : Γ ⊢ 𝟚
   var : Γ ∋ T → Γ ⊢ T
   _∙_ : Γ ⊢ S ⇒ T → Γ ⊢ S → Γ ⊢ T
   ƛ_ : Γ • S ⊢ T → Γ ⊢ S ⇒ T
+
 
 infix 4 _⊢_
 variable r s t : Γ ⊢ T
 
 mutual
   data Value : Type → Set where
-    ⟨_⟩_ : Γ • S ⊢ T → Env Γ → Value (S ⇒ T)
+    yes no : Value 𝟚
+    ⟨_⟩_ : Γ ⊢ T → Env Γ → Value T
+    wrong : Value T
 
   data Env : Ctx → Set where
     ε : Env ε
@@ -96,26 +103,32 @@ bind⇓ (⇓later a∞⇓a) a?⇓a = ⇓later (bind⇓ a∞⇓a a?⇓a)
 
 mutual
   apply : Value (S ⇒ T) → Value S → Delay i (Value T)
-  apply (⟨ t ⟩ δ) a = later (beta t δ a)
+  apply (⟨ ƛ t ⟩ δ) a = later (beta t δ a)
+  apply (⟨ var _ ⟩ _) _ = now wrong
+  apply (⟨ _ ∙ _ ⟩ _) _ = now wrong
+  apply wrong _ = now wrong
 
   beta : Γ • S ⊢ T → Env Γ → Value S → ∞Delay i (Value T)
   force (beta t δ a) = eval t (δ • a)
 
   eval : Γ ⊢ T → Env Γ → Delay i (Value T)
+  eval yes _ = now yes
+  eval no _ = now no
   eval (var x) γ = now (γ ?? x)
   eval (r ∙ s) γ =
     eval r γ >>= λ f → eval s γ >>= apply f
-  eval (ƛ t) γ = now (⟨ t ⟩ γ)
+  eval (ƛ t) γ = now (⟨ ƛ t ⟩ γ)
 
 mutual
-  -- Values in 𝒱 are "good"
   𝒱[_] : (T : Type) → Value T → Set
+  𝒱[ 𝟚 ] yes = ⊤
+  𝒱[ 𝟚 ] no = ⊤
   𝒱[ S ⇒ T ] f =
     ∀ {a : Value S}
     → a ∈ 𝒱[ S ]
     → apply f a ∈ 𝒟[ T ]
+  𝒱[ _ ] _ = ⊥
 
-  -- Delayed values in 𝒟 converge into a value in 𝒱
   𝒟[_] : (T : Type) → Delay ∞ (Value T) → Set
   𝒟[ T ] a? = ∃[ a ] a? ⇓ a × a ∈ 𝒱[ T ]
 
@@ -136,6 +149,8 @@ infix 4 semantic-typing
 syntax semantic-typing {Γ} {T} t = Γ ⊨ t ∷ T
 
 fundamental-lemma : ∀ (t : Γ ⊢ T) → Γ ⊨ t ∷ T
+fundamental-lemma yes ⊨γ = yes , ⇓now , tt
+fundamental-lemma no ⊨γ = no , ⇓now , tt
 fundamental-lemma (var zero) {γ • a} (_ , a∈𝒱) = a , ⇓now , a∈𝒱
 fundamental-lemma (var (suc x)) {γ • _} (⊨γ , _) = fundamental-lemma (var x) ⊨γ
 fundamental-lemma (r ∙ s) ⊨γ
@@ -145,8 +160,14 @@ fundamental-lemma (r ∙ s) ⊨γ
 ...  | b , ⇓b , b∈𝒱 =
   b , bind⇓ ⇓f (bind⇓ ⇓a ⇓b) , b∈𝒱
 fundamental-lemma (ƛ t) {γ} ⊨γ =
-  ⟨ t ⟩ γ  ,
+  ⟨ ƛ t ⟩ γ  ,
   ⇓now ,
   λ a∈𝒱 →
     let (f , ⇓f , f∈𝒱) = fundamental-lemma t (⊨γ , a∈𝒱) in
     f , ⇓later ⇓f , f∈𝒱
+
+type-soundness : (t : ε ⊢ 𝟚) → eval t ε ⇓ yes ⊎ eval t ε ⇓ no
+type-soundness t
+  with fundamental-lemma t tt
+... | yes , ⇓yes , _ = inj₁ ⇓yes
+... | no , ⇓no , _ = inj₂ ⇓no
