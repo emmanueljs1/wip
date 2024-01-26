@@ -2,7 +2,8 @@
 
 open import Data.Empty using (⊥)
 open import Data.Product using (_,_; _×_; ∃-syntax)
-open import Data.Unit using (⊤)
+open import Data.Sum using (_⊎_; inj₁; inj₂)
+open import Data.Unit using (⊤; tt)
 open import Relation.Unary using (_∈_)
 open import Size
 
@@ -11,7 +12,7 @@ module DelayCBN where
 variable i : Size
 
 data Type : Set where
-  ι : Type
+  𝟚 : Type
   _⇒_ : Type → Type → Type
 
 infixr 7 _⇒_
@@ -32,6 +33,7 @@ infix 4 _∋_
 variable x : Γ ∋ T
 
 data _⊢_ : Ctx → Type → Set where
+  yes no : Γ ⊢ 𝟚
   var : Γ ∋ T → Γ ⊢ T
   _∙_ : Γ ⊢ S ⇒ T → Γ ⊢ S → Γ ⊢ T
   ƛ_ : Γ • S ⊢ T → Γ ⊢ S ⇒ T
@@ -41,6 +43,7 @@ variable r s t : Γ ⊢ T
 
 mutual
   data Value : Type → Set where
+    yes no : Value 𝟚
     ⟨_⟩_ : Γ ⊢ T → Env Γ → Value T
     wrong : Value T
 
@@ -53,10 +56,10 @@ variable a b f : Value T
 variable γ δ : Env Γ
 
 _??_ : Env Γ → Γ ∋ T → Value T
-γ • a ?? zero = a
-γ • a ?? suc x = γ ?? x
+(γ • a) ?? zero = a
+(γ • a) ?? suc x = γ ?? x
 
-infix 4 _??_
+infix 5 _??_
 
 mutual
   data Delay (i : Size) (A : Set) : Set where
@@ -89,12 +92,19 @@ infix 4 _⇓_
 _⇓ : ∀ {A : Set} → Delay ∞ A → Set
 a? ⇓ = ∃[ a ] a? ⇓ a
 
+bind⇓ : ∀ {A B : Set} {f : A → Delay ∞ B}
+          {a? : Delay ∞ A} {a : A} {b : B}
+        → a? ⇓ a → f a ⇓ b → a? >>= f ⇓ b
+bind⇓ ⇓now a?⇓a = a?⇓a
+bind⇓ (⇓later a∞⇓a) a?⇓a = ⇓later (bind⇓ a∞⇓a a?⇓a)
+
 mutual
   eval : Γ ⊢ T → Env Γ → ∞Delay i (Value T)
-  eval (var x) γ
-    with γ ?? x
-  ... | ⟨ t ⟩ δ = λ{ .force → later (eval t δ) }
-  ... | wrong = λ{ .force → now wrong }
+  eval yes γ = λ{ .force → now yes }
+  eval no γ = λ{ .force → now no }
+  eval (var zero) (_ • ⟨ t ⟩ δ) = λ{ .force → later (eval t δ) }
+  eval (var zero) (_ • _) = λ{ .force → now wrong }
+  eval (var (suc x)) (γ • _) = eval (var x) γ
   eval (r ∙ s) γ =
     eval r γ ∞>>= λ where
                       (⟨ ƛ t ⟩ δ) →
@@ -105,6 +115,8 @@ mutual
 
 mutual
   𝒱[_] : (T : Type) → Value T → Set
+  𝒱[ 𝟚 ] yes = ⊤
+  𝒱[ 𝟚 ] no = ⊤
   𝒱[ S ⇒ T ] (⟨ ƛ t ⟩ δ) =
     ∀ {Γ} {γ : Env Γ} {s : Γ ⊢ S}
     → (γ , s) ∈ ℰ[ S ]
@@ -115,11 +127,13 @@ mutual
   𝒟[ T ] a? = ∃[ a ] a? ⇓ a × a ∈ 𝒱[ T ]
 
   ℰ[_] : (T : Type) → Env Γ × Γ ⊢ T → Set
-  ℰ[ T ] (γ , t) = force (eval t γ) ∈ 𝒟[ T ]
+  ℰ[ T ] (γ , t) =
+    later (eval t γ) ∈ 𝒟[ T ]
 
 _⊨_ : (Γ : Ctx) → Env Γ → Set
 ε ⊨ ε = ⊤
-Γ • T ⊨ γ • a = Γ ⊨ γ × a ∈ 𝒱[ T ]
+Γ • T ⊨ γ • ⟨ t ⟩ δ = Γ ⊨ γ × (δ , t) ∈ ℰ[ T ]
+_ • _ ⊨ _ • _ = ⊥
 
 infix 4 _⊨_
 
@@ -134,6 +148,27 @@ infix 4 semantic-typing
 syntax semantic-typing {Γ} {T} t = Γ ⊨ t ∷ T
 
 fundamental-lemma : ∀ (t : Γ ⊢ T) → Γ ⊨ t ∷ T
-fundamental-lemma (var x) ⊨γ = {!!}
-fundamental-lemma (r ∙ s) ⊨γ = {!!}
-fundamental-lemma (ƛ t) ⊨γ = {!!}
+fundamental-lemma yes ⊨γ = yes  , ⇓later ⇓now , tt
+fundamental-lemma no ⊨γ = no  , ⇓later ⇓now , tt
+fundamental-lemma (var zero) {_ • ⟨ t ⟩ δ} (_ , (a , ⇓a , a∈𝒱)) =
+  a , ⇓later ⇓a , a∈𝒱
+fundamental-lemma (var (suc x)) {γ • ⟨ _ ⟩ _} (⊨γ , _) =
+  fundamental-lemma (var x) ⊨γ
+fundamental-lemma (r ∙ s) {γ} ⊨γ
+  with fundamental-lemma r ⊨γ
+...  | ⟨ ƛ t ⟩ δ , ⇓later r⇓ , f∈𝒱
+  with f∈𝒱 {s = s} (fundamental-lemma s ⊨γ)
+...  | b , ⇓later t⇓ , b∈𝒱 =
+  b , ⇓later (bind⇓ r⇓ (⇓later (⇓later t⇓))) , b∈𝒱
+fundamental-lemma (ƛ t) {γ} ⊨γ =
+  ⟨ ƛ t ⟩ γ ,
+  ⇓later ⇓now ,
+  λ s∈ℰ →
+    let (a , ⇓a , a∈𝒱) = fundamental-lemma t (⊨γ , s∈ℰ) in
+    a , ⇓a , a∈𝒱
+
+type-soundness : (t : ε ⊢ 𝟚) → force (eval t ε) ⇓ yes ⊎ force (eval t ε) ⇓ no
+type-soundness t
+  with fundamental-lemma t tt
+... | yes , ⇓later ⇓yes , _ = inj₁ ⇓yes
+... | no , ⇓later ⇓no , _ = inj₂ ⇓no
