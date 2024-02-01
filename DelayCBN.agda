@@ -11,9 +11,7 @@ module DelayCBN where
 
 variable i : Size
 
--- Delay monad
 module Delay where
-  -- Delay monad is made up of Delay and ∞Delay
   mutual
     data Delay (i : Size) (A : Set) : Set where
       now : A → Delay i A
@@ -26,7 +24,6 @@ module Delay where
 
   open ∞Delay
 
-  -- Bind
   mutual
     _>>=_ : ∀ {A B : Set} → Delay i A → (A → Delay i B) → Delay i B
     now a >>= f = f a
@@ -37,18 +34,15 @@ module Delay where
 
   infix 5 _>>=_
 
-  -- Convergence of a delayed value
   data _⇓_ {A : Set} : Delay ∞ A → A → Set where
     ⇓now : ∀ {a : A} → now a ⇓ a
     ⇓later : ∀ {a : A} {a∞ : ∞Delay ∞ A} → force a∞ ⇓ a → later a∞ ⇓ a
 
   infix 4 _⇓_
 
-  -- A delayed value converges
   _⇓ : ∀ {A : Set} → Delay ∞ A → Set
   a? ⇓ = ∃[ a ] a? ⇓ a
 
-  -- Bind + convergence
   bind⇓ : ∀ {A B : Set} {f : A → Delay ∞ B}
             {a? : Delay ∞ A} {a : A} {b : B}
           → a? ⇓ a → f a ⇓ b → a? >>= f ⇓ b
@@ -58,9 +52,8 @@ module Delay where
 open Delay
 open ∞Delay
 
-{- Syntax + Typing -}
-
 data Type : Set where
+  ∅ : Type
   𝟚 : Type
   _⇒_ : Type → Type → Type
 
@@ -90,105 +83,95 @@ data _⊢_ : Ctx → Type → Set where
 infix 4 _⊢_
 variable r s t : Γ ⊢ T
 
-{- Semantics: we evaluate terms to a delayed element in the domain -}
--- (cbn semantics)
-
 mutual
-  data Domain : Type → Set where
-    yes no : Domain 𝟚
-    ⟨_⟩_ : Γ ⊢ T → Env Γ → Domain T
-    wrong : Domain T
+  data Thunk : Type → Set where
+    ⟨_⟩_ : Γ ⊢ T → Env Γ → Thunk T
 
   data Env : Ctx → Set where
     ε : Env ε
-    _•_ : Env Γ → Domain T → Env (Γ • T)
+    _•_ : Env Γ → Thunk T → Env (Γ • T)
 
 infix 6 ⟨_⟩_
-variable a b f : Domain T
 variable γ δ : Env Γ
 
-_??_ : Env Γ → Γ ∋ T → Domain T
-(γ • a) ?? zero = a
-(γ • a) ?? suc x = γ ?? x
+_??_ : Env Γ → Γ ∋ T → Thunk T
+γ • a ?? zero = a
+γ • a ?? suc x = γ ?? x
 
-infix 5 _??_
+infix 4 _??_
 
-mutual
-  eval-var : Γ ∋ T → Env Γ → ∞Delay i (Domain T)
-  eval-var zero (_ • ⟨ t ⟩ δ) = λ{ .force → later (eval t δ) }
-  eval-var (suc x) (γ • _) = eval-var x γ
-  eval-var zero (_ • _) = λ{ .force → now wrong }
+data Value : Type → Set where
+  yes no : Value 𝟚
+  clos_ƛ_ : Env Γ → Γ • S ⊢ T → Value (S ⇒ T)
+  wrong : Value ∅
 
-  eval-apply : Domain (S ⇒ T) → Γ ⊢ S → Env Γ → Delay i (Domain T)
-  eval-apply (⟨ ƛ t ⟩ δ) s γ = later λ { .force → later (eval t (δ • ⟨ s ⟩ γ)) }
-  eval-apply _ _ _ = now wrong
-
-  eval : Γ ⊢ T → Env Γ → ∞Delay i (Domain T)
-  eval yes γ = λ{ .force → now yes }
-  eval no γ = λ{ .force → now no }
-  eval (var x) γ = eval-var x γ
-  eval (r ∙ s) γ = eval r γ ∞>>= λ f → eval-apply f s γ
-  eval (ƛ t) γ = λ{ .force → now (⟨ ƛ t ⟩ γ) }
-
-{- Logical relation -}
+variable a b f : Value T
+infix 6 clos_ƛ_
 
 mutual
-  𝒱[_] : (T : Type) → Domain T → Set
+  apply : Value (S ⇒ T) → Thunk S → Delay i (Value T)
+  apply (clos δ ƛ t) a = later (beta t δ a)
+
+  beta : Γ • S ⊢ T → Env Γ → Thunk S → ∞Delay i (Value T)
+  force (beta t δ a) = eval t (δ • a)
+
+  eval : Γ ⊢ T → Env Γ → Delay i (Value T)
+  eval yes _ = now yes
+  eval no _ = now no
+  eval (var x) γ
+    with γ ?? x
+  ... | ⟨ t ⟩ δ = later λ{ .force → eval t δ }
+  eval (r ∙ s) γ =
+    eval r γ >>= λ f → apply f (⟨ s ⟩ γ)
+  eval (ƛ t) γ = now (clos γ ƛ t)
+
+mutual
+  𝒱[_] : (T : Type) → Value T → Set
+  𝒱[ ∅ ] _ = ⊥
   𝒱[ 𝟚 ] yes = ⊤
   𝒱[ 𝟚 ] no = ⊤
-  𝒱[ S ⇒ T ] (⟨ ƛ t ⟩ δ) =
-    ∀ {Γ} {γ : Env Γ} {s : Γ ⊢ S}
+  𝒱[ S ⇒ T ] (clos δ ƛ t) =
+    ∀ {Γ} {s : Γ ⊢ S} {γ : Env Γ}
     → (γ , s) ∈ ℰ[ S ]
     → (δ • ⟨ s ⟩ γ , t) ∈ ℰ[ T ]
-  𝒱[ _ ] _ = ⊥
 
-  𝒟[_] : (T : Type) → Delay ∞ (Domain T) → Set
+  𝒟[_] : (T : Type) → Delay ∞ (Value T) → Set
   𝒟[ T ] a? = ∃[ a ] a? ⇓ a × a ∈ 𝒱[ T ]
 
   ℰ[_] : (T : Type) → Env Γ × Γ ⊢ T → Set
-  ℰ[ T ] (γ , t) = later (eval t γ) ∈ 𝒟[ T ]
+  ℰ[ T ] (γ , t) = eval t γ ∈ 𝒟[ T ]
 
 _⊨_ : (Γ : Ctx) → Env Γ → Set
 ε ⊨ ε = ⊤
 Γ • T ⊨ γ • ⟨ t ⟩ δ = Γ ⊨ γ × (δ , t) ∈ ℰ[ T ]
-_ • _ ⊨ _ • _ = ⊥
 
 infix 4 _⊨_
 
 semantic-typing : Γ ⊢ T → Set
-semantic-typing {Γ} {T} t =
-  ∀ {γ : Env Γ}
-  → Γ ⊨ γ
-  → (γ , t) ∈ ℰ[ T ]
+semantic-typing {Γ} {T} t = ∀ {γ : Env Γ} → Γ ⊨ γ → (γ , t) ∈ ℰ[ T ]
 
 infix 4 semantic-typing
-
 syntax semantic-typing {Γ} {T} t = Γ ⊨ t ∷ T
 
-{- Fundamental lemma + type soundness -}
-
-fundamental-lemma : ∀ (t : Γ ⊢ T) → Γ ⊨ t ∷ T
-fundamental-lemma yes ⊨γ = yes  , ⇓later ⇓now , tt
-fundamental-lemma no ⊨γ = no  , ⇓later ⇓now , tt
-fundamental-lemma (var zero) {_ • ⟨ t ⟩ δ} (_ , (a , ⇓a , a∈𝒱)) =
-  a , ⇓later ⇓a , a∈𝒱
+fundamental-lemma : (t : Γ ⊢ T) → Γ ⊨ t ∷ T
+fundamental-lemma yes ⊨γ = yes , ⇓now , tt
+fundamental-lemma no ⊨γ = no , ⇓now , tt
+fundamental-lemma (var zero) {_ • ⟨ t ⟩ δ} (_ , a , t⇓ , a∈𝒱) =
+  a , ⇓later t⇓ , a∈𝒱
 fundamental-lemma (var (suc x)) {γ • ⟨ _ ⟩ _} (⊨γ , _) =
   fundamental-lemma (var x) ⊨γ
-fundamental-lemma (r ∙ s) {γ} ⊨γ
+fundamental-lemma (r ∙ s) ⊨γ
   with fundamental-lemma r ⊨γ
-...  | ⟨ ƛ t ⟩ δ , ⇓later r⇓ , f∈𝒱
-  with f∈𝒱 {s = s} (fundamental-lemma s ⊨γ)
-...  | b , ⇓later t⇓ , b∈𝒱 =
-  b , ⇓later (bind⇓ r⇓ (⇓later (⇓later t⇓))) , b∈𝒱
+...  | clos _ ƛ _ , r⇓ , pf
+  with pf (fundamental-lemma s ⊨γ)
+...  | b , ⇓b , b∈𝒱 =
+  b , bind⇓ r⇓ (⇓later ⇓b) , b∈𝒱
 fundamental-lemma (ƛ t) {γ} ⊨γ =
-  ⟨ ƛ t ⟩ γ ,
-  ⇓later ⇓now ,
-  λ s∈ℰ → fundamental-lemma t (⊨γ , s∈ℰ)
+  clos γ ƛ t ,
+  ⇓now ,
+  λ s∈𝒱 → fundamental-lemma t (⊨γ , s∈𝒱)
 
--- Type soundness: well-typed terms of answer type evaluate to yes or no
--- (notably, their evaluation is terminating)
-type-soundness : (t : ε ⊢ 𝟚) → force (eval t ε) ⇓ yes ⊎ force (eval t ε) ⇓ no
-type-soundness t
-  with fundamental-lemma t tt
-... | yes , ⇓later ⇓yes , _ = inj₁ ⇓yes
-... | no , ⇓later ⇓no , _ = inj₂ ⇓no
+type-soundness : (t : ε ⊢ 𝟚) → eval t ε ⇓ yes ⊎ eval t ε ⇓ no
+type-soundness t with fundamental-lemma t tt
+...                 | yes , ⇓yes , _         = inj₁ ⇓yes
+...                 | no , ⇓no , _           = inj₂ ⇓no
