@@ -14,6 +14,7 @@ module Delay where
 variable i : Size
 
 data Type : Set where
+  ∅ : Type
   𝟚 : Type
   _⇒_ : Type → Type → Type
 
@@ -47,14 +48,13 @@ variable r s t : Γ ⊢ T
 mutual
   data Value : Type → Set where
     yes no : Value 𝟚
-    ⟨_⟩_ : Γ ⊢ T → Env Γ → Value T
-    wrong : Value T
+    clos_ƛ_ : Env Γ → Γ • S ⊢ T → Value (S ⇒ T)
+    wrong : Value ∅
 
   data Env : Ctx → Set where
     ε : Env ε
     _•_ : Env Γ → Value T → Env (Γ • T)
 
-infix 5 ⟨_⟩_
 variable a b f : Value T
 variable γ δ : Env Γ
 
@@ -102,12 +102,6 @@ bind⇓ ⇓now a?⇓a = a?⇓a
 bind⇓ (⇓later a∞⇓a) a?⇓a = ⇓later (bind⇓ a∞⇓a a?⇓a)
 
 mutual
-  apply : Value (S ⇒ T) → Value S → Delay i (Value T)
-  apply (⟨ ƛ t ⟩ δ) a = later (beta t δ a)
-  apply (⟨ var _ ⟩ _) _ = now wrong
-  apply (⟨ _ ∙ _ ⟩ _) _ = now wrong
-  apply wrong _ = now wrong
-
   beta : Γ • S ⊢ T → Env Γ → Value S → ∞Delay i (Value T)
   force (beta t δ a) = eval t (δ • a)
 
@@ -115,18 +109,20 @@ mutual
   eval yes _ = now yes
   eval no _ = now no
   eval (var x) γ = now (γ ?? x)
-  eval (r ∙ s) γ =
-    eval r γ >>= λ f → eval s γ >>= apply f
-  eval (ƛ t) γ = now (⟨ ƛ t ⟩ γ)
+  eval (r ∙ s) γ = do
+    clos δ ƛ t ← eval r γ
+    a ← eval s γ
+    later (beta t δ a)
+  eval (ƛ t) γ = now (clos γ ƛ t)
 
 mutual
   𝒱[_] : (T : Type) → Value T → Set
   𝒱[ 𝟚 ] yes = ⊤
   𝒱[ 𝟚 ] no = ⊤
-  𝒱[ S ⇒ T ] f =
+  𝒱[ S ⇒ T ] (clos δ ƛ t) =
     ∀ {a : Value S}
     → a ∈ 𝒱[ S ]
-    → apply f a ∈ 𝒟[ T ]
+    → later (beta t δ a) ∈ 𝒟[ T ]
   𝒱[ _ ] _ = ⊥
 
   𝒟[_] : (T : Type) → Delay ∞ (Value T) → Set
@@ -155,12 +151,12 @@ fundamental-lemma (var zero) {γ • a} (_ , a∈𝒱) = a , ⇓now , a∈𝒱
 fundamental-lemma (var (suc x)) {γ • _} (⊨γ , _) = fundamental-lemma (var x) ⊨γ
 fundamental-lemma (r ∙ s) ⊨γ
   with fundamental-lemma r ⊨γ | fundamental-lemma s ⊨γ
-...  | f , ⇓f , f∈𝒱           | a , ⇓a , a∈𝒱
+...  | clos δ ƛ t , ⇓f , f∈𝒱  | a , ⇓a , a∈𝒱
   with f∈𝒱 a∈𝒱
 ...  | b , ⇓b , b∈𝒱 =
   b , bind⇓ ⇓f (bind⇓ ⇓a ⇓b) , b∈𝒱
 fundamental-lemma (ƛ t) {γ} ⊨γ =
-  ⟨ ƛ t ⟩ γ  ,
+  clos γ ƛ t  ,
   ⇓now ,
   λ a∈𝒱 →
     let (f , ⇓f , f∈𝒱) = fundamental-lemma t (⊨γ , a∈𝒱) in

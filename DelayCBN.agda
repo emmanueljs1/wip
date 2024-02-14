@@ -109,9 +109,6 @@ variable a b f : Value T
 infix 6 clos_ƛ_
 
 mutual
-  apply : Value (S ⇒ T) → Thunk S → Delay i (Value T)
-  apply (clos δ ƛ t) a = later (beta t δ a)
-
   beta : Γ • S ⊢ T → Env Γ → Thunk S → ∞Delay i (Value T)
   force (beta t δ a) = eval t (δ • a)
 
@@ -121,8 +118,9 @@ mutual
   eval (var x) γ
     with γ ?? x
   ... | ⟨ t ⟩ δ = later λ{ .force → eval t δ }
-  eval (r ∙ s) γ =
-    eval r γ >>= λ f → apply f (⟨ s ⟩ γ)
+  eval (r ∙ s) γ = do
+    clos δ ƛ t ← eval r γ
+    later (beta t δ (⟨ s ⟩ γ))
   eval (ƛ t) γ = now (clos γ ƛ t)
 
 mutual
