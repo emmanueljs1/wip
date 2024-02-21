@@ -11,165 +11,147 @@ open Eq.≡-Reasoning using (begin_; _≡⟨⟩_; step-≡; _∎)
 open Extensionality using (Extensionality)
 
 module MonadicCBPV  where
-  infix 4 _∋_ _⊩_ _⊢_ 
-  infixl 5 _•_
-  infix 5 𝑼_ 𝑭_ ƛ_
-  infix 6 _!
-  infixr 6 $_⟵_
-  infixr 7 _⇒_
-  infixl 7 _·_
+  module Typing where
+    infix 4 _∋_ _⊩_ _⊢_
+    infixl 5 _•_
+    infix 5 𝑼_ 𝑭_ ƛ_
+    infix 6 _!
+    infixr 6 $_⟵_
+    infixr 7 _⇒_
+    infixl 7 _·_
 
-  mutual
-    data ValType : Set where
-      𝟙 : ValType
-      𝑼_ : CompType → ValType
+    mutual
+      data ValType : Set where
+        𝟙 : ValType
+        𝑼_ : CompType → ValType
 
-    data CompType : Set where
-      _⇒_ : ValType → CompType → CompType
-      𝑭_ : ValType → CompType
+      data CompType : Set where
+        _⇒_ : ValType → CompType → CompType
+        𝑭_ : ValType → CompType
 
-  variable A A₁ A₂ : ValType
-  variable B : CompType
+    variable A A₁ A₂ : ValType
+    variable B : CompType
 
-  data Ctx : Set where
-    ε : Ctx
-    _•_ : Ctx → ValType → Ctx
+    data Ctx : Set where
+      ε : Ctx
+      _•_ : Ctx → ValType → Ctx
 
-  variable Γ : Ctx
+    variable Γ : Ctx
 
-  data _∋_ : Ctx → ValType → Set where
-    zero : Γ • A ∋ A
-    suc : Γ ∋ A₁ → Γ • A₂ ∋ A₁
+    data _∋_ : Ctx → ValType → Set where
+      zero : Γ • A ∋ A
+      suc : Γ ∋ A₁ → Γ • A₂ ∋ A₁
 
-  mutual
-    data _⊩_ : Ctx → ValType → Set where
-      var : Γ ∋ A → Γ ⊩ A   -- variable
-      ⟪_⟫ : Γ ⊢ B → Γ ⊩ 𝑼 B -- thunk
-      one : Γ ⊩ 𝟙           -- unit
+    mutual
+      data _⊩_ : Ctx → ValType → Set where
+        var : Γ ∋ A → Γ ⊩ A   -- variable
+        ⟪_⟫ : Γ ⊢ B → Γ ⊩ 𝑼 B -- thunk
+        one : Γ ⊩ 𝟙           -- unit
 
-    data _⊢_ : Ctx → CompType → Set where
-      return : Γ ⊩ A → Γ ⊢ 𝑭 A          -- return
-      _·_ : Γ ⊢ A ⇒ B → Γ ⊩ A → Γ ⊢ B   -- app
-      ƛ_ : Γ • A ⊢ B → Γ ⊢ A ⇒ B        -- abs
-      _! : Γ ⊩ 𝑼 B → Γ ⊢ B              -- force
-      $_⟵_ : Γ ⊢ 𝑭 A → Γ • A ⊢ B → Γ ⊢ B -- let in
+      data _⊢_ : Ctx → CompType → Set where
+        return : Γ ⊩ A → Γ ⊢ 𝑭 A          -- return
+        _·_ : Γ ⊢ A ⇒ B → Γ ⊩ A → Γ ⊢ B   -- app
+        ƛ_ : Γ • A ⊢ B → Γ ⊢ A ⇒ B        -- abs
+        _! : Γ ⊩ 𝑼 B → Γ ⊢ B              -- force
+        $_⟵_ : Γ ⊢ 𝑭 A → Γ • A ⊢ B → Γ ⊢ B -- let in
 
-  variable V V₁ V₂ : Γ ⊩ A
-  variable M N M₁ M₂ : Γ ⊢ B
+  record Monad {𝑇 : Set → Set} (RawMonadT : RawMonad 𝑇) : Set₁ where
+    open RawMonad RawMonadT renaming (return to η) public
 
-  record MonadLaws {𝑇 : Set → Set} (MonadT : RawMonad 𝑇) : Set₁ where
-    open RawMonad MonadT renaming (return to η) public
-
+    -- Monad laws
     field
       >>=-identityˡ : ∀ {A B} (a : A) (f : A → 𝑇 B) → (η a >>= f) ≡ f a
       >>=-identityʳ : ∀ {A} (m : 𝑇 A) → (m >>= η) ≡ m
       >>=-assoc : ∀ {A B C} (m : 𝑇 A) (g : A → 𝑇 B) (h : B → 𝑇 C)
                 → (m >>= g >>= h) ≡ (m >>= λ x → g x >>= h)
 
-  module Denotational (𝑻 : Set → Set) (MonadT : RawMonad 𝑻) (MonadTLaws : MonadLaws MonadT) where
-    open MonadLaws MonadTLaws
-
-    infix 4 _??_ semantic-typing-val semantic-typing-comp
+  module Denotational (𝑻 : Set → Set) (RawMonadT : RawMonad 𝑻) (Monad : Monad RawMonadT) where
+    open Typing
+    open Monad Monad
 
     postulate
       fext : Extensionality 0ℓ 0ℓ
 
-    record MonadAlgebra : Set₁ where
-      field
-        𝑋 : Set
-        α : 𝑻 𝑋 → 𝑋
+    infix 4 _??_ semantic-typing-val semantic-typing-comp
 
-    record MonadAlgebraLaws (𝐴 : MonadAlgebra) : Set₁ where
-      open MonadAlgebra 𝐴
-      field
-        α-η : ∀ x → α (η x) ≡ x
-        α->>= : ∀ {𝑌} (f : 𝑌 → 𝑻 𝑋) → (ym : 𝑻 𝑌) → α (ym >>= η ∘ α ∘ f) ≡ α (ym >>= f)
-
-    open MonadAlgebra
-    open MonadAlgebraLaws
-
-    -- free algebra
-    μ : Set → MonadAlgebra
-    𝑋 (μ X) = 𝑻 X
-    α (μ X) = join
-
-    μ-laws : (X : Set) → MonadAlgebraLaws (μ X)
-    α-η (μ-laws X) xm = >>=-identityˡ xm id
-    α->>= (μ-laws X) f ym
-      rewrite >>=-assoc ym (η ∘ join ∘ f) id
-            | fext λ x → >>=-identityˡ (join (f x)) id = sym (>>=-assoc ym f id) 
-
+    -- Semantic domains
     mutual
-      ValDomain : ValType → Set
-      ValDomain 𝟙 = ⊤
-      ValDomain (𝑼 B) = ⊤ → Carrier B
+      Domainᵛ : ValType → Set
+      Domainᵛ 𝟙 = ⊤
+      Domainᵛ (𝑼 B) = ⊤ → Domainᶜ B
 
-      Carrier : CompType → Set
-      Carrier B = 𝑋 (Domain B)
+      Domainᶜ : CompType → Set
+      Domainᶜ (A ⇒ B) = Domainᵛ A → Domainᶜ B
+      Domainᶜ (𝑭 A) = 𝑻 (Domainᵛ A)
 
-      Domain : CompType → MonadAlgebra
-      Domain (𝑭 A) = μ (ValDomain A)
+    -- Algebra for semantic domain for computation types
+    α[_] : (B : CompType) → 𝑻 (Domainᶜ B) → Domainᶜ B
+    α[ A ⇒ B ] fm a = α[ B ] (fm >>= λ f → η (f a))
+    α[ 𝑭 A ] = join
 
-      𝑋 (Domain (A ⇒ B)) = ValDomain A → Carrier B
-      α (Domain (A ⇒ B)) fm a = α (Domain B) (fm >>= λ f → η (f a))
+    -- Algebra laws
+    α-η : ∀ a → α[ B ] (η a) ≡ a
+    α-η {A ⇒ B} f = fext lemma where
+      lemma : ∀ a → α[ B ] (η f >>= λ g → η (g a)) ≡ f a
+      lemma a rewrite >>=-identityˡ f (λ g → η (g a)) = α-η {B} (f a)
+    α-η {𝑭 A} a = >>=-identityˡ a id
 
-    DomainLaws : (B : CompType) → MonadAlgebraLaws (Domain B)
-    DomainLaws (𝑭 A) = μ-laws (ValDomain A)
-
-    α-η (DomainLaws (A ⇒ B)) f = fext lemma where
-      lemma : ∀ a → α (Domain B) (η f >>= λ g → η (g a)) ≡ f a
-      lemma a rewrite >>=-identityˡ f (λ g → η (g a)) = α-η (DomainLaws B) (f a)
-    α->>= (DomainLaws (A ⇒ B)) f ym = fext lemma where
+    α->>= : ∀ {X} f (am : 𝑻 X)
+          → α[ B ] (am >>= η ∘ α[ B ] ∘ f) ≡ α[ B ] (am >>= f)
+    α->>= {A ⇒ B} f am = fext lemma where
       lemma = λ a →
         begin
-          α (Domain B) (ym >>= η ∘ α (Domain (A ⇒ B)) ∘ f >>= λ g → η (g a))
-        ≡⟨ cong (α (Domain B))
+          α[ B ] (am >>= η ∘ α[ A ⇒ B ] ∘ f >>= λ g → η (g a))
+        ≡⟨ cong α[ B ]
              (begin
-               (ym >>= η ∘ α (Domain (A ⇒ B)) ∘ f >>= λ g → η (g a))
-             ≡⟨ >>=-assoc ym (η ∘ α (Domain (A ⇒ B)) ∘ f) (λ g → η (g a)) ⟩
-                (ym >>= λ y → η (α (Domain (A ⇒ B)) (f y)) >>= λ g → η (g a))
-             ≡⟨ cong (ym >>=_) (fext (λ y → >>=-identityˡ (α (Domain (A ⇒ B)) (f y)) λ g → η (g a))) ⟩
-               (ym >>= η ∘ α (Domain B) ∘ (λ y → f y >>= λ g → η (g a)))
+               (am >>= η ∘ α[ A ⇒ B ] ∘ f >>= λ g → η (g a))
+             ≡⟨ >>=-assoc am (η ∘ α[ A ⇒ B ] ∘ f) (λ g → η (g a)) ⟩
+                (am >>= λ y → η (α[ A ⇒ B ] (f y)) >>= λ g → η (g a))
+             ≡⟨ cong (am >>=_) (fext (λ y → >>=-identityˡ (α[ A ⇒ B ] (f y)) λ g → η (g a))) ⟩
+               (am >>= η ∘ α[ B ] ∘ (λ y → f y >>= λ g → η (g a)))
              ∎)
         ⟩
-          α (Domain B) (ym >>= η ∘ α (Domain B) ∘ (λ y → f y >>= λ g → η (g a)))
-        ≡⟨ α->>= (DomainLaws B) (λ y → f y >>= λ g → η (g a)) ym ⟩
-          α (Domain B) (ym >>= λ y → f y >>= λ g → η (g a))
-        ≡⟨ cong (α (Domain B)) (sym (>>=-assoc ym f (λ g → η (g a)))) ⟩
-          α (Domain B) (ym >>= f >>= λ g → η (g a))
+          α[ B ] (am >>= η ∘ α[ B ] ∘ (λ y → f y >>= λ g → η (g a)))
+        ≡⟨ α->>= {B} ((λ y → f y >>= λ g → η (g a))) am ⟩
+          α[ B ] (am >>= λ y → f y >>= λ g → η (g a))
+        ≡⟨ cong α[ B ] (sym (>>=-assoc am f (λ g → η (g a)))) ⟩
+          α[ B ] (am >>= f >>= λ g → η (g a))
         ∎
+    α->>= {𝑭 A} f am
+      rewrite >>=-assoc am (η ∘ join ∘ f) id
+            | fext λ x → >>=-identityˡ (join (f x)) id = sym (>>=-assoc am f id)
 
     Env : Ctx → Set
     Env ε = ⊤
-    Env (Γ • A) = Env Γ × ValDomain A
+    Env (Γ • A) = Env Γ × Domainᵛ A
 
     variable γ : Env Γ
 
-    _??_ : Env Γ → Γ ∋ A → ValDomain A
+    _??_ : Env Γ → Γ ∋ A → Domainᵛ A
     (_ , a) ?? zero = a
     (γ , _) ?? suc x = γ ?? x
 
     mutual
-      ⟦_⟧v : Γ ⊩ A → Env Γ → ValDomain A
+      ⟦_⟧v : Γ ⊩ A → Env Γ → Domainᵛ A
       ⟦ var x ⟧v γ = γ ?? x
       ⟦ ⟪ M ⟫ ⟧v γ = λ _ → ⟦ M ⟧c γ
       ⟦ one ⟧v γ = tt
 
-      ⟦_⟧c : Γ ⊢ B → Env Γ → Carrier B
+      ⟦_⟧c : Γ ⊢ B → Env Γ → Domainᶜ B
       ⟦ return V ⟧c γ = η (⟦ V ⟧v γ)
       ⟦ ƛ M ⟧c γ = λ a → ⟦ M ⟧c (γ , a)
       ⟦ M · V ⟧c γ = ⟦ M ⟧c γ (⟦ V ⟧v γ)
       ⟦ V ! ⟧c γ = ⟦ V ⟧v γ tt
-      ⟦_⟧c {B = B} ($ M ⟵ N) γ = α (Domain B) (⟦ M ⟧c γ >>= λ a → η (⟦ N ⟧c (γ , a)))
+      ⟦_⟧c {B = B} ($ M ⟵ N) γ = α[ B ] (⟦ M ⟧c γ >>= λ a → η (⟦ N ⟧c (γ , a)))
 
     mutual
-      𝒱[_] : (A : ValType) → ValDomain A → Set
+      𝒱[_] : (A : ValType) → Domainᵛ A → Set
       𝒱[ 𝟙 ] tt = ⊤
       𝒱[ 𝑼 B ] a = a tt ∈ 𝒞[ B ]
 
-      𝒞[_] : (B : CompType) → Carrier B → Set
+      𝒞[_] : (B : CompType) → Domainᶜ B → Set
       𝒞[ A ⇒ B ] f =
-        ∀ {W : ValDomain A} → W ∈ 𝒱[ A ] → f W ∈ 𝒞[ B ]
+        ∀ {W : Domainᵛ A} → W ∈ 𝒱[ A ] → f W ∈ 𝒞[ B ]
       𝒞[ 𝑭 A ] b = ∃[ a ] b ≡ η a × a ∈ 𝒱[ A ]
 
     _⊨_ : (Γ : Ctx) → Env Γ → Set
@@ -208,7 +190,7 @@ module MonadicCBPV  where
       ...  | a , eq , a∈𝒱
         rewrite eq
            | >>=-identityˡ a (λ a → η (⟦ N ⟧c (γ , a)))
-           | α-η (DomainLaws B) (⟦ N ⟧c (γ , a)) =
+           | α-η {B} (⟦ N ⟧c (γ , a)) =
         fundamental-lemma-comp N (⊨γ , a∈𝒱)
 
     type-soundness-comp : (M : ε ⊢ 𝑭 A) → ∃[ a ] ⟦ M ⟧c tt ≡ η a × a ∈ 𝒱[ A ]
