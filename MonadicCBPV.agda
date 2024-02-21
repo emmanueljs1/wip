@@ -7,6 +7,7 @@ open import Function using (_∘_; id)
 open import Level using (0ℓ)
 open import Relation.Unary using (_∈_)
 open Eq using (_≡_; refl; trans; sym; cong)
+open Eq.≡-Reasoning using (begin_; _≡⟨⟩_; step-≡; _∎)
 open Extensionality using (Extensionality)
 
 module MonadicCBPV  where
@@ -118,7 +119,25 @@ module MonadicCBPV  where
     α-η (DomainLaws (A ⇒ B)) f = fext lemma where
       lemma : ∀ a → α (Domain B) (η f >>= λ g → η (g a)) ≡ f a
       lemma a rewrite >>=-identityˡ f (λ g → η (g a)) = α-η (DomainLaws B) (f a)
-    α->>= (DomainLaws (A ⇒ B)) f ym = fext ?
+    α->>= (DomainLaws (A ⇒ B)) f ym = fext lemma where
+      lemma = λ a →
+        begin
+          α (Domain B) (ym >>= η ∘ α (Domain (A ⇒ B)) ∘ f >>= λ g → η (g a))
+        ≡⟨ cong (α (Domain B))
+             (begin
+               (ym >>= η ∘ α (Domain (A ⇒ B)) ∘ f >>= λ g → η (g a))
+             ≡⟨ >>=-assoc ym (η ∘ α (Domain (A ⇒ B)) ∘ f) (λ g → η (g a)) ⟩
+                (ym >>= λ y → η (α (Domain (A ⇒ B)) (f y)) >>= λ g → η (g a))
+             ≡⟨ cong (ym >>=_) (fext (λ y → >>=-identityˡ (α (Domain (A ⇒ B)) (f y)) λ g → η (g a))) ⟩
+               (ym >>= η ∘ α (Domain B) ∘ (λ y → f y >>= λ g → η (g a)))
+             ∎)
+        ⟩
+          α (Domain B) (ym >>= η ∘ α (Domain B) ∘ (λ y → f y >>= λ g → η (g a)))
+        ≡⟨ α->>= (DomainLaws B) (λ y → f y >>= λ g → η (g a)) ym ⟩
+          α (Domain B) (ym >>= λ y → f y >>= λ g → η (g a))
+        ≡⟨ cong (α (Domain B)) (sym (>>=-assoc ym f (λ g → η (g a)))) ⟩
+          α (Domain B) (ym >>= f >>= λ g → η (g a))
+        ∎
 
     Env : Ctx → Set
     Env ε = ⊤
