@@ -112,7 +112,7 @@ module GradedMonadCBPV  where
 
       -- sub-monotonic : sub m >>= sub ∘ f ≡ sub m >>= f
 
-      >>=-identityˡ : ∀ {X Y φ} (x : X) (f : X → 𝑇 φ Y) → (η x >>= f) ≡ f x
+      >>=-identityˡ : ∀ {X Y φ} ⦃ eq : ⊥ + φ ≡ φ ⦄ (x : X) (f : X → 𝑇 φ Y) → (_>>=_ ⦃ eq ⦄ (η x) f) ≡ f x
       >>=-identityʳ : ∀ {X φ} (m : 𝑇 φ X) → (m >>= η) ≡ m
       >>=-assoc : ∀ {X Y Z φ₁ φ₂ φ₃} (m : 𝑇 φ₁ X) (g : X → 𝑇 φ₂ Y) (h : Y → 𝑇 φ₃ Z)
                 → (m >>= g >>= h) ≡ (m >>= λ x → g x >>= h)
@@ -149,12 +149,11 @@ module GradedMonadCBPV  where
 
     -- Algebra laws
     α-η : ∀ a → α[ B , φ ] (η a) ≡ a
-    α-η {A ⇒ B} {φ} f = fext {!lemma!} where
-      lemma : {!!}
+    α-η {A ⇒ B} {φ} f = fext lemma where
       lemma = λ a →
         begin
           α[ B , φ ] (η f >>= λ g → η (g a))
-        ≡⟨ cong α[ B , φ ] (>>=-identityˡ f (λ g → η (g a))) ⟩
+        ≡⟨ cong (α[ B , φ ]) (>>=-identityˡ f λ g → η (g a)) ⟩
           α[ B , φ ] (η (f a))
         ≡⟨ α-η {B = B} (f a) ⟩
           f a
@@ -228,7 +227,7 @@ module GradedMonadCBPV  where
 
       fundamental-lemma-comp : (M : Γ ⊢ B # φ) → Γ ⊨ M ∷ B # φ
       fundamental-lemma-comp (return V) {γ} ⊨γ =
-        ⟦ V ⟧v γ , ≤-refl , sym sub-id  , fundamental-lemma-val V ⊨γ
+        ⟦ V ⟧v γ , ≤-refl , sym sub-id , fundamental-lemma-val V ⊨γ
       fundamental-lemma-comp (M · V) ⊨γ =
         fundamental-lemma-comp M ⊨γ (fundamental-lemma-val V ⊨γ)
       fundamental-lemma-comp (ƛ M) ⊨γ {a} a∈𝒱 =
@@ -237,11 +236,11 @@ module GradedMonadCBPV  where
       fundamental-lemma-comp {B = B} ($ M ⟵ N) {γ = γ} ⊨γ
         with fundamental-lemma-comp M ⊨γ
       ...  | a , pf , eq , a∈𝒱
-        rewrite eq
-           | >>=-identityˡ a (λ a → η (⟦ N ⟧c (γ , a)))
-           | α-η {B} (⟦ N ⟧c (γ , a)) =
-        ?
-        -- fundamental-lemma-comp N (⊨γ , a∈𝒱)
+        rewrite eq =
+--           | >>=-identityˡ a (λ a → η (⟦ N ⟧c (γ , a))) =
+--           | α-η {B} (⟦ N ⟧c (γ , a)) =
+--        fundamental-lemma-comp N (⊨γ , a∈𝒱)
+        {!!}
       fundamental-lemma-comp (subeff M φ≤ψ) ⊨γ =
         𝒞-closed-≤ (fundamental-lemma-comp M ⊨γ) φ≤ψ
 
