@@ -7,11 +7,11 @@ open import Data.Unit using (tt) renaming (⊤ to Unit)
 open import Function using (_∘_)
 open Eq using (_≡_; refl)
 
-{- Normalization by Evaluation: Dependent Types and Impredicativity, Abel 2013 -}
+{- Normalization by Evaluation: Dependent Types and Impredicativity (Abel 2013) -}
 
--- NbE for type-assignment STLC, proof that untyped NbE is terminating
--- for typeable terms
-module TypeAssignmentNbE where
+-- Proof that untyped NbE is terminating for typeable terms
+-- i.e. section 3.4 of Abel 2013
+module UntypedNbeTerminating where
 
 {- Types -}
 
